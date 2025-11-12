@@ -4,18 +4,20 @@ import plotly.express as px
 from io import BytesIO
 from fpdf import FPDF
 from datetime import datetime
+import os
 
 st.set_page_config(page_title="Controle de Absenteísmo - AESC", layout="wide")
 
 # ==========================
-# 🔗 LINK DO GOOGLE SHEETS
+# 📂 LEITURA LOCAL DO CSV
 # ==========================
-sheet_id = "1DgzNkglGSliXuAfgRp55YQmKrDXpk6Nu"
-csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=1955342039"
-
-
 @st.cache_data(ttl=300)
 def carregar_dados():
+    # 🔗 Link direto para a aba correta do Google Sheets
+    sheet_id = "1DgzNkglGSliXuAfgRp55YQmKrDXpk6Nu"
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=1955342039"
+
+    # Leitura online do CSV
     df = pd.read_csv(csv_url)
     df.columns = df.columns.str.strip().str.upper()
 
@@ -34,7 +36,7 @@ def carregar_dados():
     if 'TERMINO' in df.columns:
         df['TERMINO'] = pd.to_datetime(df['TERMINO'], errors='coerce', dayfirst=True)
 
-    # 🔹 Tratamento seguro da coluna DIAS
+    # Tratar a coluna DIAS
     if 'DIAS' in df.columns:
         df['DIAS'] = pd.to_numeric(df['DIAS'], errors='coerce')
     else:
@@ -43,7 +45,9 @@ def carregar_dados():
 
     df['DIAS'] = df['DIAS'].fillna(1).astype(int)
     df['MES'] = df['INICIO'].dt.to_period('M').astype(str)
+
     return df
+
 
 
 df = carregar_dados()
@@ -52,7 +56,7 @@ df = carregar_dados()
 # 🎨 TÍTULO
 # ==========================
 st.title("📊 Controle de Absenteísmo - AESC")
-st.caption("Dados atualizados automaticamente da planilha *AtestadosAesc2025*.")
+st.caption("Dados atualizados automaticamente do arquivo local *AtestadosAesc2025.csv*.")
 
 # ==========================
 # 🧱 FILTROS
@@ -197,11 +201,9 @@ else:
         pdf.cell(col_widths[i], 8, col, border=1, align='C', fill=True)
     pdf.ln()
 
-    # --- Função utilitária para formatar valores corretamente
     def fmt(v):
         if pd.isna(v):
             return ""
-        # Evita erro de "01/01/1970" para números
         if isinstance(v, (int, float)):
             return str(int(v))
         if isinstance(v, (pd.Timestamp, datetime)):
@@ -219,26 +221,12 @@ else:
     fill = False
 
     for _, row in df_filtrado[header].iterrows():
-        texts = []
-        for h in header:
-            if h in ['INICIO', 'TERMINO', 'MES']:
-                texto = fmt(row[h])
-            else:
-                texto = str(row[h]) if not pd.isna(row[h]) else ""
-            texts.append(texto)
-
-        max_lines = 1
-        for i, txt in enumerate(texts):
-            usable_w = max(col_widths[i] - 2, 1)
-            lines = max(1, int((pdf.get_string_width(txt) / usable_w) + 0.9999))
-            max_lines = max(max_lines, lines)
-
+        texts = [fmt(row[h]) for h in header]
+        max_lines = max(1, max(int((pdf.get_string_width(txt) / max(col_widths[i]-2,1)) + 0.9999) for i, txt in enumerate(texts)))
         row_h = line_height * max_lines
-        x_start = pdf.get_x()
-        y_start = pdf.get_y()
+        x_start, y_start = pdf.get_x(), pdf.get_y()
         for i, txt in enumerate(texts):
-            x = x_start + sum(col_widths[:i])
-            pdf.set_xy(x, y_start)
+            pdf.set_xy(x_start + sum(col_widths[:i]), y_start)
             align = 'C' if header[i] == 'DIAS' else 'L'
             pdf.multi_cell(col_widths[i], line_height, txt, border=1, align=align, fill=fill)
         pdf.set_xy(x_start, y_start + row_h)
@@ -251,10 +239,11 @@ else:
                 pdf.cell(col_widths[i], 8, col, border=1, align='C', fill=True)
             pdf.ln()
             pdf.set_font("Helvetica", "", 9)
-        # Gera o PDF e garante compatibilidade entre versões do FPDF
-        pdf_output = pdf.output(dest="S").encode("latin1") if isinstance(pdf.output(dest="S"), str) else pdf.output(dest="S")
-        pdf_buffer = BytesIO(pdf_output)
 
+    pdf_output = pdf.output(dest="S")
+    if isinstance(pdf_output, str):
+        pdf_output = pdf_output.encode("latin1")
+    pdf_buffer = BytesIO(pdf_output)
 
     colB.download_button(
         "🧾 Gerar PDF Profissional",
