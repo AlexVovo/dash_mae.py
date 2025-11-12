@@ -251,10 +251,10 @@ else:
                 pdf.cell(col_widths[i], 8, col, border=1, align='C', fill=True)
             pdf.ln()
             pdf.set_font("Helvetica", "", 9)
+        # Gera o PDF e garante compatibilidade entre versões do FPDF
+        pdf_output = pdf.output(dest="S").encode("latin1") if isinstance(pdf.output(dest="S"), str) else pdf.output(dest="S")
+        pdf_buffer = BytesIO(pdf_output)
 
-    pdf_output = pdf.output(dest="S")
-    pdf_bytes = pdf_output if isinstance(pdf_output, bytes) else pdf_output.encode("latin1")
-    pdf_buffer = BytesIO(pdf_bytes)
 
     colB.download_button(
         "🧾 Gerar PDF Profissional",
