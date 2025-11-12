@@ -11,7 +11,8 @@ st.set_page_config(page_title="Controle de Absenteísmo - AESC", layout="wide")
 # 🔗 LINK DO GOOGLE SHEETS
 # ==========================
 sheet_id = "1DgzNkglGSliXuAfgRp55YQmKrDXpk6Nu"
-csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid=1955342039"
+
 
 @st.cache_data(ttl=300)
 def carregar_dados():
@@ -35,20 +36,15 @@ def carregar_dados():
 
     # 🔹 Tratamento seguro da coluna DIAS
     if 'DIAS' in df.columns:
-        # Converter para numérico, forçando erros para NaN (caso haja '#VALUE!')
         df['DIAS'] = pd.to_numeric(df['DIAS'], errors='coerce')
     else:
-        # Calcular se a planilha não tiver DIAS
         mask = df['INICIO'].notna() & df['TERMINO'].notna()
         df.loc[mask, 'DIAS'] = (df.loc[mask, 'TERMINO'] - df.loc[mask, 'INICIO']).dt.days + 1
 
-    # Substituir NaN por 1 e converter para inteiro
     df['DIAS'] = df['DIAS'].fillna(1).astype(int)
-
-    # Criar coluna de MÊS (período)
     df['MES'] = df['INICIO'].dt.to_period('M').astype(str)
-
     return df
+
 
 df = carregar_dados()
 
@@ -127,7 +123,7 @@ else:
         resumo = df_filtrado.groupby(['ESTABELECIMENTO', 'SETOR', 'CID10'], as_index=False)['DIAS'].sum()
         graf = px.bar(resumo, x='SETOR', y='DIAS', color='CID10',
                       title="🧩 Correlação: Estabelecimento × Setor × CID × Dias", text='DIAS')
-    else:  # Correlação mensal corrigida
+    else:
         resumo = df_filtrado.groupby(['ESTABELECIMENTO', 'SETOR', 'MES'], as_index=False)['DIAS'].sum()
         graf = px.bar(resumo, x='MES', y='DIAS', color='SETOR',
                       title="📆 Correlação: Estabelecimento × Setor × Dias × Mês", text='DIAS')
@@ -162,21 +158,23 @@ else:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # PDF PROFISSIONAL
+    # ==========================
+    # 🧾 GERAR PDF PROFISSIONAL
+    # ==========================
     class PDF(FPDF):
         def header(self):
             try:
-                self.image("logo.png", 10, 8, 25)
+                self.image("logo.png", 10, 6, 30)
             except:
                 pass
-            self.set_font("Helvetica", "B", 15)
+            self.set_font("Helvetica", "B", 16)
             self.cell(0, 10, "Relatório de Absenteísmo - AESC", ln=True, align="C")
-            self.set_font("Helvetica", "", 10)
+            self.set_font("Helvetica", "", 11)
             self.cell(0, 8, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
             self.ln(4)
-            self.set_draw_color(180, 180, 180)
-            self.line(10, 28, 200, 28)
-            self.ln(6)
+            self.set_draw_color(150, 150, 150)
+            self.line(10, 25, 287, 25)
+            self.ln(8)
 
         def footer(self):
             self.set_y(-15)
@@ -184,30 +182,83 @@ else:
             self.set_text_color(120, 120, 120)
             self.cell(0, 10, f"Página {self.page_no()} / {{nb}}", align="C")
 
-    pdf = PDF()
+    pdf = PDF(orientation='L', unit='mm', format='A4')
     pdf.alias_nb_pages()
     pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_font("Helvetica", "", 10)
 
-    header = ['ESTABELECIMENTO', 'SETOR', 'FUNCAO', 'CID10', 'INICIO', 'TERMINO', 'DIAS', 'MES']
+    header = ['COLABORADOR', 'ESTABELECIMENTO', 'SETOR', 'FUNCAO', 'INICIO', 'TERMINO', 'DIAS', 'CID10', 'MES']
+    col_widths = [25, 45, 45, 40, 25, 25, 10, 25, 20]
+
     pdf.set_font("Helvetica", "B", 10)
-    pdf.set_fill_color(230, 230, 230)
-    for col in header:
-        pdf.cell(25, 8, col[:12], border=1, align='C', fill=True)
+    pdf.set_fill_color(220, 220, 220)
+    for i, col in enumerate(header):
+        pdf.cell(col_widths[i], 8, col, border=1, align='C', fill=True)
     pdf.ln()
 
-    pdf.set_font("Helvetica", "", 9)
-    for _, row in df_filtrado[header].iterrows():
-        for v in row:
-            pdf.cell(25, 7, str(v)[:12], border=1)
-        pdf.ln()
+    # --- Função utilitária para formatar valores corretamente
+    def fmt(v):
+        if pd.isna(v):
+            return ""
+        # Evita erro de "01/01/1970" para números
+        if isinstance(v, (int, float)):
+            return str(int(v))
+        if isinstance(v, (pd.Timestamp, datetime)):
+            return v.strftime("%d/%m/%Y")
+        try:
+            tmp = pd.to_datetime(v, errors='coerce')
+            if not pd.isna(tmp):
+                return tmp.strftime("%d/%m/%Y")
+        except:
+            pass
+        return str(v)
 
-    pdf_bytes = pdf.output(dest="S").encode('latin1')
+    pdf.set_font("Helvetica", "", 9)
+    line_height = 4
+    fill = False
+
+    for _, row in df_filtrado[header].iterrows():
+        texts = []
+        for h in header:
+            if h in ['INICIO', 'TERMINO', 'MES']:
+                texto = fmt(row[h])
+            else:
+                texto = str(row[h]) if not pd.isna(row[h]) else ""
+            texts.append(texto)
+
+        max_lines = 1
+        for i, txt in enumerate(texts):
+            usable_w = max(col_widths[i] - 2, 1)
+            lines = max(1, int((pdf.get_string_width(txt) / usable_w) + 0.9999))
+            max_lines = max(max_lines, lines)
+
+        row_h = line_height * max_lines
+        x_start = pdf.get_x()
+        y_start = pdf.get_y()
+        for i, txt in enumerate(texts):
+            x = x_start + sum(col_widths[:i])
+            pdf.set_xy(x, y_start)
+            align = 'C' if header[i] == 'DIAS' else 'L'
+            pdf.multi_cell(col_widths[i], line_height, txt, border=1, align=align, fill=fill)
+        pdf.set_xy(x_start, y_start + row_h)
+        fill = not fill
+        if pdf.get_y() > pdf.h - 25:
+            pdf.add_page()
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_fill_color(220, 220, 220)
+            for i, col in enumerate(header):
+                pdf.cell(col_widths[i], 8, col, border=1, align='C', fill=True)
+            pdf.ln()
+            pdf.set_font("Helvetica", "", 9)
+
+    pdf_output = pdf.output(dest="S")
+    pdf_bytes = pdf_output if isinstance(pdf_output, bytes) else pdf_output.encode("latin1")
     pdf_buffer = BytesIO(pdf_bytes)
 
     colB.download_button(
         "🧾 Gerar PDF Profissional",
         data=pdf_buffer,
-        file_name="Relatorio_Absenteismo_AESC.pdf",
+        file_name=f"Relatorio_Absenteismo_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
         mime="application/pdf"
     )
